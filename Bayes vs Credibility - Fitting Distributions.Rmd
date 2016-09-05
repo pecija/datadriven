@@ -1,0 +1,266 @@
+---
+title: "Bayes vs Credibility"
+author: "Pedro Ecija Serrano"
+date: "14 March 2016"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+#Start
+
+Installing the package with the insurance data we will use. We are interested in the 'dataCar' dataset
+
+```{r, warning=FALSE}
+  library(MASS) #Useful to fit statistical distributions
+  library(insuranceData)
+  #This package comes with the following datasets:
+  #AutoBi: US motor insurance claims
+  #AutoClaims: US motor insurance claims
+  #AutoCollision: UK motor insurance claims data
+  #ClaimsLong: simulated motor insurance book (policies and claims)
+  #dataCar: motor insurance claims data
+  #dataOhlson: Sweedish motorcycle insurance claims data
+  #IndustryAuto: US motor insurance claims triangle
+  #SingaporeAuto: Singaporean motor insurance claims data
+  #ThirdParty: Australian motor insurance claims data
+  #WorkersComp: Workers Compensation claims data
+  
+  library(dplyr)
+  library(ggplot2)
+  data(dataCar)
+  set.seed(4321)
+```
+
+##Number of Claims
+
+The dataset represents the total population and our assumption is that the claims and loss distributions followed seen in the population are available as a market index.
+
+We will also assume that an insurance company is targetting women but has no data regarding how women's claims experience may differ from the population's.
+
+The company could follow a Bayesian approach and consider the population's distributions as priors and develop a posterior distribution with any claims experience gained during operations.
+
+The insurer could also follow an actuarial approach and use credibility theory to develop its own distributions.
+
+We will try both and compare results.
+
+```{r}
+  
+  hist(dataCar$numclaims, col='red', xlab = 'Number of Claims')
+  popclaimsn <- sum(dataCar$numclaims) #Total number of claims in the dataset
+  popsize <- nrow(dataCar) #Size of the dataset
+  popmean <- mean(dataCar$numclaims) #Mean
+  popvar <- var(dataCar$numclaims) #Variance
+  
+```
+
+The shape of the histogram, together with the similarity between the mean (`r round(popmean,4)`)  and the variance (`r round(popvar,4)`), indicate that the population's number of claims may be a Poisson distributed.
+
+Let's create a subset with only female drivers.  This is the market the insurance company is targetting and whose distribution we ignore.
+
+We will also create a random sample from this subset, which will be the company's policyholders (I arbitrarily choose a third of all female drivers).
+
+```{r}
+  set.seed(600)
+  nsample <- 1/3
+  femdata <- filter(dataCar, gender=='F')
+  femsample <- sample_n(femdata, round(nsample*nrow(femdata),0), replace=FALSE)
+  
+```
+
+There are `r nrow(femdata)` rows in the dataset and the company's portfolio has `r nrow(femsample)` policyholders.
+
+###Bayesian approach to number of claims
+
+Here we will see how a Bayesian approach, taking the population's distribution for the number of claims as prior distribution, produces a posterior distribution based on the data from the company's policyholders.
+
+The Poisson's conjugate prior is a Gamma distribution with two parameters: shape and rate.  Shape equals the number of claims and rate equals the number of observations.
+
+We know there are `r popclaimsn` in a population of `r popsize` policies. This means our prior parameters are: scale = `r popclaimsn` and rate = `r popsize`.
+
+These parameters will be udpated with the claims experience arising from the company's book.
+
+```{r}
+  #Prior distribution
+  xrange <- seq(0.05,0.1,0.0001)
+  alpha <- popclaimsn #Shape
+  beta <- popsize #Size
+  nprior <- dgamma(xrange, shape=alpha, rate=beta)
+  
+  #Posterior distribution
+  alpha.star <- alpha + sum(femsample$numclaims)
+  beta.star <- beta + nrow(femsample)
+  nposterior <- dgamma(xrange, shape = alpha.star, rate=beta.star)
+  
+  qplot(xrange, nprior, geom='line', color='red')+geom_line(aes(xrange, nposterior), color='blue')
+  
+```
+
+The red line shows the prior conjugate, a gamma with parameters based on the population.  The blue line shows how this distribution has been affected with the data: the mean has shifted slightly to the right and the density of probability seems a little narrower, indicating more certainty over the estimated parameter.
+
+The population's mean was `r round(alpha/beta, 4)` and the portfolio's mean is `r round(alpha.star/ beta.star, 4)`.
+
+In terms of variance, the numbers are so small that we are better off comparing the log of the variance: the variance based on the population was `r log(alpha/beta^2)` and the variance based on the posterior distribution is `r log(alpha.star/beta.star^2)`
+
+So, using a Bayesian approach to estimate the posterior distribution, we now believe the number of claims in the company's portfolio is a random variable Poisson distributed with mean and variance equal to `r alpha/beta`
+
+###Credibility approach to number of claims
+
+Credibility theory allows for the combination of old and new information with the use of a credibility factor.  This factor measures the strength of our belief in the new data so that the estimated parameter.  In our case we try to estimate the mean and variance of a Poisson distribution.
+
+Credibility theory says that the new parameter is given by the following expresion: $\lambda' = \lambda^{*}*z + \lambda * (1-z)$  Where $\lambda'$ is the parameter we will use, $lambda$ is the original parameter from the population's distribution and $lambda^{*}$ is the parameter solely based on the company's portfolio.
+
+The credibility factor z is calculated as: $z = \sqrt (n/N)$  Where n is the size of the portfolio and N is the size of the population.  We could use other magnitudes such as written premium rather than size, etc but it appears appropriate in this case and we do not really have much else to use.
+
+```{r}
+  lambda <- popmean
+  lambda.star <- mean(femsample$numclaims)
+  z <- sqrt(nrow(femsample)/popsize)
+  lambda.comma <- lambda.star * z + lambda * (1-z)
+  
+```
+
+The result is `r round(lambda.comma, 4)`.
+
+Let's find a better way to compare the results we have:
+
+```{r}
+  plotdata <- c(popmean, alpha.star/beta.star, lambda.comma, lambda.star)
+  plotlabels <- c('Population', 'Bayes Posteriori', 'Credibility', 'Portfolio')
+  qplot(x=plotlabels, y=plotdata, geom='point')
+  
+```
+
+##Claims Cost
+
+We can follow a similar process to come out with an estimate for the company's average claims cost.  Let us see first what the population's distribution looks like:
+
+```{r}
+  hist(dataCar$claimcst0, col='red', xlab = 'Claims Cost')
+
+```
+
+It is hard to  notice much so let's try a density plot:
+
+```{r}
+  qplot(dataCar$claimcst0, geom='density', fill='Density')
+
+```
+
+The packages 'fitdistrplus' has many useful functions to fit statistical distributions so we will try some now.
+
+```{r}
+  library(fitdistrplus) #This packages has useful functions to fit statistical distributions.
+  descdist(dataCar$claimcst0, boot=1000) 
+  #The optional boot parameter is used apply a non-parametric bootstrap procedure to take into account the uncertainty in the estimates for skewness and kurtosis, which are known not to be robust.
+  
+```
+
+The Cullen and Frey graph suggest that a Gamma should be our best approach to model the distribution of claim costs. However, the Gamma is not defined for zero values and we have plenty of them! 
+
+The next best solution would be a beta but this is defined only for values between zero and one.
+
+After that, we should be looking at a lognormal, even if we already know it is not the ideal fit but, again, the lognormal never takes the value of zero.
+
+We have to try separating the observations where there have been no claims and see if that removes the zeroes in the claims cost.
+
+```{r}
+  CarClaims <- filter(dataCar, numclaims >0)
+  summary(CarClaims$claimcst0)
+  
+```
+
+That has done the trick but we need to review what the claim cost distribution looks like after that change.
+
+```{r}
+  plotdist(CarClaims$claimcst0, histo=TRUE, demp=TRUE)
+  qplot(CarClaims$claimcst0, geom='density', fill='Density')
+  descdist(CarClaims$claimcst0, boot=1000)
+
+```
+It looks like the gamma is still the best fit so we will try again.
+
+```{r}
+  cprior <- fitdist(CarClaims$claimcst0, 'gamma', lower=c(0.01,0.01)) 
+  #We use 'lower=c(0.01,0.01)' to force fitdist use non-negative values.
+  summary(cprior)
+  plot(cprior)
+  gofstat(cprior)
+  
+```
+
+The plot is not very promising given how the plotted density of the fitted gamma compares with the data histogram.  We will have to try something less clever and more exhaustive. I will fit the following distributions and compare results: a gamma (we already have it), a lognormal, a Weibull, a Pareto and a Loglogistic.
+
+```{r}
+  library(actuar) #Here we can find the Pareto distribution
+  cpGamma <- cprior
+  cpLogNorm <- fitdist(CarClaims$claimcst0, 'lnorm')
+  cpWeibull <- fitdist(CarClaims$claimcst0, 'weibull')
+  cpPareto <- fitdist(CarClaims$claimcst0, 'pareto', start=list(shape=1, scale=500))
+  cpLogLogist <- fitdist(CarClaims$claimcst0, 'llogis', start=list(shape=1, scale=500))
+  
+  plot(cpGamma, legend='Gamma')
+  plot(cpLogNorm, legend='Lognormal')
+  plot(cpWeibull, legend= 'Weibull')
+  plot(cpPareto, legend='Pareto')
+  plot(cpLogLogist, legend='Loglogistic')
+  
+  PlotLegend <- c("Gamma", "LogNormal", "Weibull", "Pareto", "Log Logistic")
+  denscomp(list(cpGamma, cpLogNorm, cpWeibull, cpPareto, cpLogLogist), legendtext=PlotLegend)
+  cdfcomp(list(cpGamma, cpLogNorm, cpWeibull, cpPareto, cpLogLogist), xlogscale=TRUE, ylogscale=TRUE, legendtext=PlotLegend)
+  
+  gofstat(list(cpGamma, cpLogNorm, cpWeibull, cpPareto, cpLogLogist), fitnames=PlotLegend)
+  gofstat(list(cpGamma, cpLogNorm, cpWeibull, cpPareto, cpLogLogist), fitnames=PlotLegend)$kstest
+  gofstat(list(cpGamma, cpLogNorm, cpWeibull, cpPareto, cpLogLogist), fitnames=PlotLegend)$cvmtest
+  gofstat(list(cpGamma, cpLogNorm, cpWeibull, cpPareto, cpLogLogist), fitnames=PlotLegend)$adtest
+  
+```
+
+No fitting seems adequate.  I suspect it is, mostly, due to the slight leap the distribution takes around costs of $500. Let us try transforming the claim cost with a logarithm and see if that helps.
+
+```{r}
+  CarClaims$logclaims <- log(CarClaims$claimcst0, exp(1))
+  plotdist(CarClaims$logclaims, histo=TRUE, demp=TRUE)
+  qplot(CarClaims$logclaims, geom='density', fill='Density')
+  descdist(CarClaims$logclaims, boot=1000)
+
+```
+
+The log transformation puts us well into beta distribution territory, which cannot be as we do not have the right range of values. In addition, just a look at the density plot suggests this is going to be even more difficult to fit than the original. Let us try something else instead, the square root of the claim cost.
+
+```{r}
+  CarClaims$sqrtclaims <- sqrt(CarClaims$claimcst0)
+  plotdist(CarClaims$sqrtclaims, histo=TRUE, demp=TRUE)
+  qplot(CarClaims$sqrtclaims, geom='density', fill='Density')
+  descdist(CarClaims$sqrtclaims, boot=1000)
+
+```
+  That looks a little more optimistic. We will fit a bunch of distributions and see which one performs best.
+
+```{r}
+  cpGamma2 <- fitdist(CarClaims$sqrtclaims, 'gamma', lower=c(0.01, 0.01))
+  cpExp2 <- fitdist(CarClaims$sqrtclaims, 'exp', lower=0.01)
+  cpWeibull2 <- fitdist(CarClaims$sqrtclaims, 'weibull')
+  cpPareto2 <- fitdist(CarClaims$sqrtclaims, 'pareto', start=list(shape=1, scale=500))
+  
+  plot(cpGamma2)
+  plot(cpExp2)
+  plot(cpWeibull2)
+  plot(cpPareto2)
+  
+  PlotLegend2 <- c("Gamma", "Exponential", "Weibull", "Pareto")
+  denscomp(list(cpGamma2, cpExp2, cpWeibull2, cpPareto2), legendtext=PlotLegend2)
+  cdfcomp(list(cpGamma2, cpExp2, cpWeibull2, cpPareto2), xlogscale=TRUE, ylogscale=TRUE, legendtext=PlotLegend2)
+  
+```
+
+```{r}
+  gofstat(list(cpGamma2, cpExp2, cpWeibull2, cpPareto2), fitnames=PlotLegend2)
+  gofstat(list(cpGamma2, cpExp2, cpWeibull2, cpPareto2), fitnames=PlotLegend2)$kstest
+  gofstat(list(cpGamma2, cpExp2, cpWeibull2, cpPareto2), fitnames=PlotLegend2)$cvmtest
+  gofstat(list(cpGamma2, cpExp2, cpWeibull2, cpPareto2), fitnames=PlotLegend2)$adtest
+  
+```
+
